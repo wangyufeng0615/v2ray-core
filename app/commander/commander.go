@@ -1,6 +1,6 @@
 package commander
 
-//go:generate go run $GOPATH/src/v2ray.com/core/common/errors/errorgen/main.go -pkg commander -path App,Commander
+//go:generate errorgen
 
 import (
 	"context"
@@ -8,9 +8,11 @@ import (
 	"sync"
 
 	"google.golang.org/grpc"
+
 	"v2ray.com/core"
 	"v2ray.com/core/common"
 	"v2ray.com/core/common/signal/done"
+	"v2ray.com/core/features/outbound"
 )
 
 // Commander is a V2Ray feature that provides gRPC methods to external clients.
@@ -19,7 +21,7 @@ type Commander struct {
 	server *grpc.Server
 	config Config
 	v      *core.Instance
-	ohm    core.OutboundHandlerManager
+	ohm    outbound.Manager
 }
 
 // NewCommander creates a new Commander based on the given config.
@@ -30,7 +32,7 @@ func NewCommander(ctx context.Context, config *Config) (*Commander, error) {
 		ohm:    v.OutboundHandlerManager(),
 		v:      v,
 	}
-	if err := v.RegisterFeature((*Commander)(nil), c); err != nil {
+	if err := v.RegisterFeature(c); err != nil {
 		return nil, err
 	}
 	return c, nil

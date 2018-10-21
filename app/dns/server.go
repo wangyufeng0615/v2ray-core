@@ -1,6 +1,6 @@
 package dns
 
-//go:generate go run $GOPATH/src/v2ray.com/core/common/errors/errorgen/main.go -pkg dns -path App,DNS
+//go:generate errorgen
 
 import (
 	"context"
@@ -11,6 +11,8 @@ import (
 	"v2ray.com/core/common"
 	"v2ray.com/core/common/net"
 	"v2ray.com/core/common/strmatcher"
+	"v2ray.com/core/features"
+	"v2ray.com/core/features/dns"
 )
 
 type Server struct {
@@ -40,7 +42,7 @@ func New(ctx context.Context, config *Config) (*Server, error) {
 	server.hosts = hosts
 
 	v := core.MustFromContext(ctx)
-	if err := v.RegisterFeature((*core.DNSClient)(nil), server); err != nil {
+	if err := v.RegisterFeature(server); err != nil {
 		return nil, newError("unable to register DNSClient.").Base(err)
 	}
 
@@ -61,7 +63,7 @@ func New(ctx context.Context, config *Config) (*Server, error) {
 	}
 
 	if len(config.NameServers) > 0 {
-		core.PrintDeprecatedFeatureWarning("simple DNS server")
+		features.PrintDeprecatedFeatureWarning("simple DNS server")
 	}
 
 	for _, destPB := range config.NameServers {
@@ -96,6 +98,10 @@ func New(ctx context.Context, config *Config) (*Server, error) {
 	return server, nil
 }
 
+func (*Server) Type() interface{} {
+	return dns.ClientType()
+}
+
 // Start implements common.Runnable.
 func (s *Server) Start() error {
 	return nil
@@ -122,7 +128,7 @@ func (s *Server) LookupIP(domain string) ([]net.IP, error) {
 	if s.domainMatcher != nil {
 		idx := s.domainMatcher.Match(domain)
 		if idx > 0 {
-			ns := s.servers[idx]
+			ns := s.servers[s.domainIndexMap[idx]]
 			ips, err := s.queryIPTimeout(ns, domain)
 			if len(ips) > 0 {
 				return ips, nil

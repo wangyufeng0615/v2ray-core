@@ -1,6 +1,6 @@
 package log
 
-//go:generate go run $GOPATH/src/v2ray.com/core/common/errors/errorgen/main.go -pkg log -path App,Log
+//go:generate errorgen
 
 import (
 	"context"
@@ -30,7 +30,7 @@ func New(ctx context.Context, config *Config) (*Instance, error) {
 
 	v := core.FromContext(ctx)
 	if v != nil {
-		common.Must(v.RegisterFeature((*log.Handler)(nil), g))
+		common.Must(v.RegisterFeature(g))
 	}
 
 	return g, nil

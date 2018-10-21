@@ -13,6 +13,8 @@ import (
 	"v2ray.com/core/common/session"
 	"v2ray.com/core/common/signal"
 	"v2ray.com/core/common/task"
+	"v2ray.com/core/features/policy"
+	"v2ray.com/core/features/routing"
 	"v2ray.com/core/transport/internet"
 	"v2ray.com/core/transport/internet/udp"
 	"v2ray.com/core/transport/pipe"
@@ -57,7 +59,7 @@ func (s *Server) Network() net.NetworkList {
 	return list
 }
 
-func (s *Server) Process(ctx context.Context, network net.Network, conn internet.Connection, dispatcher core.Dispatcher) error {
+func (s *Server) Process(ctx context.Context, network net.Network, conn internet.Connection, dispatcher routing.Dispatcher) error {
 	switch network {
 	case net.Network_TCP:
 		return s.handleConnection(ctx, conn, dispatcher)
@@ -68,7 +70,7 @@ func (s *Server) Process(ctx context.Context, network net.Network, conn internet
 	}
 }
 
-func (s *Server) handlerUDPPayload(ctx context.Context, conn internet.Connection, dispatcher core.Dispatcher) error {
+func (s *Server) handlerUDPPayload(ctx context.Context, conn internet.Connection, dispatcher routing.Dispatcher) error {
 	udpServer := udp.NewDispatcher(dispatcher, func(ctx context.Context, payload *buf.Buffer) {
 		request := protocol.RequestHeaderFromContext(ctx)
 		if request == nil {
@@ -87,6 +89,11 @@ func (s *Server) handlerUDPPayload(ctx context.Context, conn internet.Connection
 	})
 
 	account := s.user.Account.(*MemoryAccount)
+	inbound := session.InboundFromContext(ctx)
+	if inbound == nil {
+		panic("no inbound metadata")
+	}
+	inbound.User = s.user
 
 	reader := buf.NewReader(conn)
 	for {
@@ -124,7 +131,7 @@ func (s *Server) handlerUDPPayload(ctx context.Context, conn internet.Connection
 			}
 
 			dest := request.Destination()
-			if inbound := session.InboundFromContext(ctx); inbound != nil && inbound.Source.IsValid() {
+			if inbound.Source.IsValid() {
 				log.Record(&log.AccessMessage{
 					From:   inbound.Source,
 					To:     dest,
@@ -134,7 +141,6 @@ func (s *Server) handlerUDPPayload(ctx context.Context, conn internet.Connection
 			}
 			newError("tunnelling request to ", dest).WriteToLog(session.ExportIDToError(ctx))
 
-			ctx = protocol.ContextWithUser(ctx, request.User)
 			ctx = protocol.ContextWithRequestHeader(ctx, request)
 			udpServer.Dispatch(ctx, dest, data)
 		}
@@ -143,7 +149,7 @@ func (s *Server) handlerUDPPayload(ctx context.Context, conn internet.Connection
 	return nil
 }
 
-func (s *Server) handleConnection(ctx context.Context, conn internet.Connection, dispatcher core.Dispatcher) error {
+func (s *Server) handleConnection(ctx context.Context, conn internet.Connection, dispatcher routing.Dispatcher) error {
 	sessionPolicy := s.v.PolicyManager().ForLevel(s.user.Level)
 	conn.SetReadDeadline(time.Now().Add(sessionPolicy.Timeouts.Handshake))
 
@@ -160,6 +166,12 @@ func (s *Server) handleConnection(ctx context.Context, conn internet.Connection,
 	}
 	conn.SetReadDeadline(time.Time{})
 
+	inbound := session.InboundFromContext(ctx)
+	if inbound == nil {
+		panic("no inbound metadata")
+	}
+	inbound.User = s.user
+
 	dest := request.Destination()
 	log.Record(&log.AccessMessage{
 		From:   conn.RemoteAddr(),
@@ -169,12 +181,10 @@ func (s *Server) handleConnection(ctx context.Context, conn internet.Connection,
 	})
 	newError("tunnelling request to ", dest).WriteToLog(session.ExportIDToError(ctx))
 
-	ctx = protocol.ContextWithUser(ctx, request.User)
-
 	ctx, cancel := context.WithCancel(ctx)
 	timer := signal.CancelAfterInactivity(ctx, cancel, sessionPolicy.Timeouts.ConnectionIdle)
 
-	ctx = core.ContextWithBufferPolicy(ctx, sessionPolicy.Buffer)
+	ctx = policy.ContextWithBufferPolicy(ctx, sessionPolicy.Buffer)
 	link, err := dispatcher.Dispatch(ctx, dest)
 	if err != nil {
 		return err
